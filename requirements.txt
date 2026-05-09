@@ -1,6 +1,7 @@
 flask==3.0.3
-gunicorn==22.0.0
-line-bot-sdk==3.13.0
-yfinance==0.2.50
-pandas==2.2.3
-numpy==2.0.2
+     gunicorn==22.0.0
+     line-bot-sdk==3.13.0
+     yfinance==0.2.50
+     pandas==2.2.3
+     numpy==2.0.2
+     curl_cffi==0.7.4
