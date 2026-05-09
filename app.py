@@ -10,8 +10,13 @@ from linebot.models import MessageEvent, TextMessage, TextSendMessage
 import yfinance as yf
 import pandas as pd
 import numpy as np
+from curl_cffi import requests as curl_requests
 
 app = Flask(__name__)
+
+# session ปลอม browser ของจริง เพื่อให้ Yahoo Finance ไม่บล็อก cloud IP
+def get_yf_session():
+    return curl_requests.Session(impersonate="chrome120")
 
 CHANNEL_ACCESS_TOKEN = os.environ.get('LINE_CHANNEL_ACCESS_TOKEN', '')
 CHANNEL_SECRET = os.environ.get('LINE_CHANNEL_SECRET', '')
@@ -66,7 +71,7 @@ def rsi_signal(rsi: float) -> str:
 def analyze_stock(symbol: str) -> str:
     try:
         symbol = symbol.upper().strip()
-        ticker = yf.Ticker(symbol)
+        ticker = yf.Ticker(symbol, session=get_yf_session())
         df = ticker.history(period="1y")
 
         if df.empty or len(df) < 20:
