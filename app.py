@@ -26,6 +26,33 @@ def health():
     return "LINE Stock Bot is running ✅", 200
 
 
+@app.route("/debug/<symbol>", methods=['GET'])
+def debug_stock(symbol):
+    """endpoint สำหรับ debug — เปิดในเบราว์เซอร์เพื่อดูว่า Stooq ตอบอะไร"""
+    s = symbol.lower().strip()
+    if s.endswith('-usd'):
+        s = s.replace('-usd', '') + 'usd'
+    elif '.' not in s:
+        s = s + '.us'
+    url = f"https://stooq.com/q/d/l/?s={s}&i=d"
+    try:
+        r = std_requests.get(url, timeout=15, headers={
+            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) '
+                          'AppleWebKit/537.36 (KHTML, like Gecko) '
+                          'Chrome/120.0.0.0 Safari/537.36'
+        })
+        body_preview = r.text[:500]
+        return (
+            f"URL: {url}\n"
+            f"Status: {r.status_code}\n"
+            f"Length: {len(r.text)}\n"
+            f"--- Body Preview ---\n"
+            f"{body_preview}"
+        ), 200, {'Content-Type': 'text/plain; charset=utf-8'}
+    except Exception as e:
+        return f"Error: {type(e).__name__}: {e}", 500
+
+
 @app.route("/webhook", methods=['POST'])
 def webhook():
     signature = request.headers.get('X-Line-Signature', '')
