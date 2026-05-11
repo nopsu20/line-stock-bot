@@ -1,9 +1,8 @@
 """
 LINE Bot - Stock Analyzer with Support/Resistance Levels
-ดึงข้อมูลจาก Stooq (ฟรี ไม่ต้อง API key, รองรับ cloud IP)
+ใช้ Twelve Data API (ฟรี 800 calls/วัน, รองรับ cloud IP)
 """
 import os
-import io
 from flask import Flask, request, abort
 from linebot import LineBotApi, WebhookHandler
 from linebot.exceptions import InvalidSignatureError
@@ -16,6 +15,7 @@ app = Flask(__name__)
 
 CHANNEL_ACCESS_TOKEN = os.environ.get('LINE_CHANNEL_ACCESS_TOKEN', '')
 CHANNEL_SECRET = os.environ.get('LINE_CHANNEL_SECRET', '')
+TWELVE_DATA_API_KEY = os.environ.get('TWELVE_DATA_API_KEY', '')
 
 line_bot_api = LineBotApi(CHANNEL_ACCESS_TOKEN)
 handler = WebhookHandler(CHANNEL_SECRET)
@@ -28,22 +28,28 @@ def health():
 
 @app.route("/debug/<symbol>", methods=['GET'])
 def debug_stock(symbol):
-    """endpoint สำหรับ debug — เปิดในเบราว์เซอร์เพื่อดูว่า Stooq ตอบอะไร"""
-    s = symbol.lower().strip()
-    if s.endswith('-usd'):
-        s = s.replace('-usd', '') + 'usd'
-    elif '.' not in s:
-        s = s + '.us'
-    url = f"https://stooq.com/q/d/l/?s={s}&i=d"
+    """เปิดในเบราว์เซอร์เพื่อดูว่า Twelve Data ตอบอะไรกลับมา"""
+    s = symbol.upper().strip()
+    if s.endswith('-USD'):
+        s = s.replace('-USD', '/USD')
+    elif s.endswith('.BK'):
+        s = s.replace('.BK', '')
+
+    url = "https://api.twelvedata.com/time_series"
+    params = {
+        'symbol': s,
+        'interval': '1day',
+        'outputsize': 252,
+        'apikey': TWELVE_DATA_API_KEY,
+        'order': 'asc',
+    }
+    apikey_status = "set" if TWELVE_DATA_API_KEY else "NOT SET ❌"
     try:
-        r = std_requests.get(url, timeout=15, headers={
-            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) '
-                          'AppleWebKit/537.36 (KHTML, like Gecko) '
-                          'Chrome/120.0.0.0 Safari/537.36'
-        })
-        body_preview = r.text[:500]
+        r = std_requests.get(url, params=params, timeout=15)
+        body_preview = r.text[:800]
         return (
-            f"URL: {url}\n"
+            f"Symbol: {s}\n"
+            f"TWELVE_DATA_API_KEY: {apikey_status}\n"
             f"Status: {r.status_code}\n"
             f"Length: {len(r.text)}\n"
             f"--- Body Preview ---\n"
@@ -64,40 +70,44 @@ def webhook():
     return 'OK'
 
 
-def fetch_stooq(symbol: str):
-    """ดึงข้อมูลราคารายวันจาก Stooq.com (CSV API ฟรี)"""
-    s = symbol.lower().strip()
+def fetch_twelvedata(symbol: str):
+    """ดึงข้อมูลราคารายวันจาก Twelve Data API"""
+    s = symbol.upper().strip()
 
-    # แปลง ticker เป็นรูปแบบของ Stooq
-    if s.endswith('-usd'):
-        # Crypto: BTC-USD -> btcusd
-        s = s.replace('-usd', '') + 'usd'
-    elif s.endswith('.bk'):
-        # หุ้นไทย: PTT.BK -> คงเดิม (Stooq รองรับบางตัว)
-        pass
-    elif '.' not in s:
-        # หุ้น US: aapl -> aapl.us
-        s = s + '.us'
+    # แปลงรูปแบบ ticker
+    if s.endswith('-USD'):
+        # Crypto: BTC-USD -> BTC/USD
+        s = s.replace('-USD', '/USD')
+    elif s.endswith('.BK'):
+        # Thai stocks: PTT.BK -> PTT (Twelve Data ใช้ชื่อสั้น)
+        s = s.replace('.BK', '')
 
-    url = f"https://stooq.com/q/d/l/?s={s}&i=d"
+    url = "https://api.twelvedata.com/time_series"
+    params = {
+        'symbol': s,
+        'interval': '1day',
+        'outputsize': 252,
+        'apikey': TWELVE_DATA_API_KEY,
+        'order': 'asc',
+    }
     try:
-        r = std_requests.get(url, timeout=15, headers={
-            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) '
-                          'AppleWebKit/537.36 (KHTML, like Gecko) '
-                          'Chrome/120.0.0.0 Safari/537.36'
-        })
+        r = std_requests.get(url, params=params, timeout=15)
         if r.status_code != 200:
             return None
-        text = r.text.strip()
-        # Stooq ส่ง CSV ที่ขึ้นต้นด้วย "Date,Open,High,Low,Close,Volume"
-        if not text.startswith('Date'):
+        data = r.json()
+        # ตรวจ error message
+        if data.get('status') == 'error':
             return None
-        df = pd.read_csv(io.StringIO(text))
-        if df.empty or len(df) < 20:
+        values = data.get('values')
+        if not values or len(values) < 20:
             return None
-        # เอา 252 แท่งล่าสุด (~1 ปี)
-        df = df.tail(252).reset_index(drop=True)
-        return df
+        df = pd.DataFrame(values)
+        # แปลงเป็น float
+        df['Open'] = df['open'].astype(float)
+        df['High'] = df['high'].astype(float)
+        df['Low'] = df['low'].astype(float)
+        df['Close'] = df['close'].astype(float)
+        return df[['Open', 'High', 'Low', 'Close']].reset_index(drop=True)
     except Exception:
         return None
 
@@ -132,7 +142,7 @@ def rsi_signal(rsi):
 def analyze_stock(symbol: str) -> str:
     try:
         symbol = symbol.upper().strip()
-        df = fetch_stooq(symbol)
+        df = fetch_twelvedata(symbol)
 
         if df is None or df.empty or len(df) < 20:
             return (
@@ -203,7 +213,7 @@ def analyze_stock(symbol: str) -> str:
         msg.append(f"  High: ${high_52w:,.2f}")
         msg.append(f"  Low:  ${low_52w:,.2f}")
         msg.append("")
-        msg.append("📡 ข้อมูลจาก stooq.com")
+        msg.append("📡 ข้อมูลจาก Twelve Data")
 
         return "\n".join(msg)
     except Exception as e:
@@ -240,7 +250,6 @@ def handle_message(event):
     elif upper.startswith('/'):
         reply = "❓ คำสั่งไม่ถูกต้อง พิมพ์ /help เพื่อดูวิธีใช้"
     else:
-        # ticker ปกติ (1-10 ตัว ตัวอักษร/ตัวเลข/. -)
         if 1 <= len(text) <= 10 and text.replace('.', '').replace('-', '').isalnum():
             reply = analyze_stock(upper)
         else:
