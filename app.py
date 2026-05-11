@@ -1,22 +1,18 @@
 """
 LINE Bot - Stock Analyzer with Support/Resistance Levels
-วิเคราะห์หุ้นต่างประเทศพร้อมแนวรับ/แนวต้าน ผ่าน LINE
+ดึงข้อมูลจาก Stooq (ฟรี ไม่ต้อง API key, รองรับ cloud IP)
 """
 import os
+import io
 from flask import Flask, request, abort
 from linebot import LineBotApi, WebhookHandler
 from linebot.exceptions import InvalidSignatureError
 from linebot.models import MessageEvent, TextMessage, TextSendMessage
-import yfinance as yf
 import pandas as pd
 import numpy as np
-from curl_cffi import requests as curl_requests
+import requests as std_requests
 
 app = Flask(__name__)
-
-# session ปลอม browser ของจริง เพื่อให้ Yahoo Finance ไม่บล็อก cloud IP
-def get_yf_session():
-    return curl_requests.Session(impersonate="chrome120")
 
 CHANNEL_ACCESS_TOKEN = os.environ.get('LINE_CHANNEL_ACCESS_TOKEN', '')
 CHANNEL_SECRET = os.environ.get('LINE_CHANNEL_SECRET', '')
@@ -41,6 +37,44 @@ def webhook():
     return 'OK'
 
 
+def fetch_stooq(symbol: str):
+    """ดึงข้อมูลราคารายวันจาก Stooq.com (CSV API ฟรี)"""
+    s = symbol.lower().strip()
+
+    # แปลง ticker เป็นรูปแบบของ Stooq
+    if s.endswith('-usd'):
+        # Crypto: BTC-USD -> btcusd
+        s = s.replace('-usd', '') + 'usd'
+    elif s.endswith('.bk'):
+        # หุ้นไทย: PTT.BK -> คงเดิม (Stooq รองรับบางตัว)
+        pass
+    elif '.' not in s:
+        # หุ้น US: aapl -> aapl.us
+        s = s + '.us'
+
+    url = f"https://stooq.com/q/d/l/?s={s}&i=d"
+    try:
+        r = std_requests.get(url, timeout=15, headers={
+            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) '
+                          'AppleWebKit/537.36 (KHTML, like Gecko) '
+                          'Chrome/120.0.0.0 Safari/537.36'
+        })
+        if r.status_code != 200:
+            return None
+        text = r.text.strip()
+        # Stooq ส่ง CSV ที่ขึ้นต้นด้วย "Date,Open,High,Low,Close,Volume"
+        if not text.startswith('Date'):
+            return None
+        df = pd.read_csv(io.StringIO(text))
+        if df.empty or len(df) < 20:
+            return None
+        # เอา 252 แท่งล่าสุด (~1 ปี)
+        df = df.tail(252).reset_index(drop=True)
+        return df
+    except Exception:
+        return None
+
+
 def calc_rsi(series: pd.Series, period: int = 14) -> float:
     delta = series.diff()
     gain = delta.where(delta > 0, 0).rolling(period).mean()
@@ -50,8 +84,8 @@ def calc_rsi(series: pd.Series, period: int = 14) -> float:
     return float(rsi.iloc[-1])
 
 
-def trend_signal(close: float, sma50: float, sma200: float | None) -> str:
-    if sma200 is None:
+def trend_signal(close, sma50, sma200):
+    if sma200 is None or sma50 is None:
         return "📊 ข้อมูลไม่พอประเมินเทรนด์ระยะยาว"
     if close > sma50 > sma200:
         return "🟢 เทรนด์ขาขึ้น (Uptrend)"
@@ -60,22 +94,25 @@ def trend_signal(close: float, sma50: float, sma200: float | None) -> str:
     return "🟡 Sideways / กำลังเปลี่ยนเทรนด์"
 
 
-def rsi_signal(rsi: float) -> str:
+def rsi_signal(rsi):
     if rsi >= 70:
-        return f"⚠️ Overbought (ซื้อมากไป)"
+        return "⚠️ Overbought (ซื้อมากไป)"
     if rsi <= 30:
-        return f"⚠️ Oversold (ขายมากไป)"
+        return "⚠️ Oversold (ขายมากไป)"
     return "✅ ปกติ"
 
 
 def analyze_stock(symbol: str) -> str:
     try:
         symbol = symbol.upper().strip()
-        ticker = yf.Ticker(symbol, session=get_yf_session())
-        df = ticker.history(period="1y")
+        df = fetch_stooq(symbol)
 
-        if df.empty or len(df) < 20:
-            return f"❌ ไม่พบข้อมูลหุ้น '{symbol}'\nลองตรวจ ticker เช่น AAPL, TSLA, NVDA"
+        if df is None or df.empty or len(df) < 20:
+            return (
+                f"❌ ไม่พบข้อมูลหุ้น '{symbol}'\n"
+                "ลองตรวจ ticker เช่น AAPL, TSLA, NVDA\n"
+                "หรือคริปโต BTC-USD, ETH-USD"
+            )
 
         close = float(df['Close'].iloc[-1])
         prev_close = float(df['Close'].iloc[-2])
@@ -83,7 +120,7 @@ def analyze_stock(symbol: str) -> str:
         low = float(df['Low'].iloc[-1])
         change_pct = (close - prev_close) / prev_close * 100
 
-        # Pivot Point Classic (จากแท่งล่าสุด)
+        # Pivot Point Classic
         pivot = (high + low + close) / 3
         r1 = 2 * pivot - low
         r2 = pivot + (high - low)
@@ -97,11 +134,11 @@ def analyze_stock(symbol: str) -> str:
         sma50 = float(df['Close'].rolling(50).mean().iloc[-1]) if len(df) >= 50 else None
         sma200 = float(df['Close'].rolling(200).mean().iloc[-1]) if len(df) >= 200 else None
 
-        # Swing High/Low (20 วัน)
+        # Swing 20 วัน
         swing_high_20 = float(df['High'].rolling(20).max().iloc[-1])
         swing_low_20 = float(df['Low'].rolling(20).min().iloc[-1])
 
-        # 52-week
+        # 52 สัปดาห์
         high_52w = float(df['High'].max())
         low_52w = float(df['Low'].min())
 
@@ -112,7 +149,7 @@ def analyze_stock(symbol: str) -> str:
         msg.append("━━━━━━━━━━━━━━━")
         msg.append(f"💰 ราคา: ${close:,.2f} ({change_pct:+.2f}%)")
         msg.append(f"📈 RSI(14): {rsi:.1f} {rsi_signal(rsi)}")
-        msg.append(trend_signal(close, sma50 or 0, sma200))
+        msg.append(trend_signal(close, sma50, sma200))
         msg.append("")
         msg.append("🔴 แนวต้าน (Resistance)")
         msg.append(f"  R3: ${r3:,.2f}")
@@ -138,6 +175,8 @@ def analyze_stock(symbol: str) -> str:
         msg.append("📅 52 สัปดาห์")
         msg.append(f"  High: ${high_52w:,.2f}")
         msg.append(f"  Low:  ${low_52w:,.2f}")
+        msg.append("")
+        msg.append("📡 ข้อมูลจาก stooq.com")
 
         return "\n".join(msg)
     except Exception as e:
@@ -153,6 +192,9 @@ HELP_TEXT = (
     "• NVDA  (NVIDIA)\n"
     "• MSFT  (Microsoft)\n"
     "• GOOGL (Google)\n\n"
+    "คริปโต:\n"
+    "• BTC-USD  (Bitcoin)\n"
+    "• ETH-USD  (Ethereum)\n\n"
     "คำสั่งอื่น:\n"
     "• /help  - แสดงคำแนะนำ\n"
     "• /analyze AAPL  - วิเคราะห์หุ้น"
@@ -171,8 +213,8 @@ def handle_message(event):
     elif upper.startswith('/'):
         reply = "❓ คำสั่งไม่ถูกต้อง พิมพ์ /help เพื่อดูวิธีใช้"
     else:
-        # ถ้าเป็น ticker ปกติ (ตัวอักษร 1-6 ตัว) ก็วิเคราะห์เลย
-        if 1 <= len(text) <= 6 and text.replace('.', '').replace('-', '').isalnum():
+        # ticker ปกติ (1-10 ตัว ตัวอักษร/ตัวเลข/. -)
+        if 1 <= len(text) <= 10 and text.replace('.', '').replace('-', '').isalnum():
             reply = analyze_stock(upper)
         else:
             reply = "❓ ไม่เข้าใจคำสั่ง พิมพ์ /help เพื่อดูวิธีใช้"
