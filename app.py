@@ -1,6 +1,6 @@
 """
 LINE Bot - Stock Analyzer with Sector Top Picks
-ใช้ Twelve Data API + cache เพื่อประหยัด API quota
+ใช้ Twelve Data API + cache 30 นาที
 """
 import os
 import time
@@ -22,7 +22,6 @@ line_bot_api = LineBotApi(CHANNEL_ACCESS_TOKEN)
 handler = WebhookHandler(CHANNEL_SECRET)
 
 # ---------- Sector Definitions ----------
-# คัดมาจาก mega-trend ที่ทุกตัวเป็นผู้นำในกลุ่ม
 SECTORS = {
     'AI': {
         'name': '🤖 Artificial Intelligence',
@@ -116,7 +115,7 @@ SECTORS = {
 
 # ---------- Simple Cache (memory, 30 นาที) ----------
 CACHE = {}
-CACHE_TTL = 30 * 60  # 30 นาที
+CACHE_TTL = 30 * 60
 
 
 def cache_get(key):
@@ -140,9 +139,7 @@ def health():
 @app.route("/debug/<symbol>", methods=['GET'])
 def debug_stock(symbol):
     s = symbol.upper().strip()
-    if s.endswith('-USD'):
-        s = s.replace('-USD', '/USD')
-    elif s.endswith('.BK'):
+    if s.endswith('.BK'):
         s = s.replace('.BK', '')
     url = "https://api.twelvedata.com/time_series"
     params = {
@@ -179,9 +176,7 @@ def webhook():
 def fetch_twelvedata(symbol: str):
     """ดึงข้อมูลจาก Twelve Data — มี cache 30 นาที"""
     s = symbol.upper().strip()
-    if s.endswith('-USD'):
-        s = s.replace('-USD', '/USD')
-    elif s.endswith('.BK'):
+    if s.endswith('.BK'):
         s = s.replace('.BK', '')
 
     cached = cache_get(f"price:{s}")
@@ -243,7 +238,7 @@ def rsi_signal(rsi):
     return "✅ ปกติ"
 
 
-# ---------- Analysis: เต็มรูปแบบสำหรับ /analyze หรือพิมพ์ ticker ปกติ ----------
+# ---------- Stock Analysis ----------
 def analyze_stock(symbol: str) -> str:
     try:
         symbol = symbol.upper().strip()
@@ -252,8 +247,7 @@ def analyze_stock(symbol: str) -> str:
         if df is None or df.empty or len(df) < 20:
             return (
                 f"❌ ไม่พบข้อมูลหุ้น '{symbol}'\n"
-                "ลองตรวจ ticker เช่น AAPL, TSLA, NVDA\n"
-                "หรือคริปโต BTC-USD, ETH-USD"
+                "ลองตรวจ ticker เช่น AAPL, TSLA, NVDA"
             )
 
         close = float(df['Close'].iloc[-1])
@@ -312,8 +306,6 @@ def analyze_stock(symbol: str) -> str:
         m.append("📅 52 สัปดาห์")
         m.append(f"  High: ${high_52w:,.2f}")
         m.append(f"  Low:  ${low_52w:,.2f}")
-        m.append("")
-        m.append("⚠️ ไม่ใช่คำแนะนำลงทุน — DYOR")
 
         return "\n".join(m)
     except Exception as e:
@@ -322,7 +314,6 @@ def analyze_stock(symbol: str) -> str:
 
 # ---------- Sector Top Picks ----------
 def get_quick_stats(symbol: str):
-    """ดึง stats สั้นๆ ของหุ้น 1 ตัว สำหรับ /top"""
     df = fetch_twelvedata(symbol)
     if df is None or df.empty or len(df) < 20:
         return None
@@ -366,7 +357,6 @@ def top_picks(sector_code: str) -> str:
 
     m.append("")
     m.append("📊 พิมพ์ ticker เพื่อดูแนวรับแนวต้าน")
-    m.append("⚠️ ไม่ใช่คำแนะนำลงทุน — DYOR")
     return "\n".join(m)
 
 
@@ -383,20 +373,58 @@ def sectors_list() -> str:
 HELP_TEXT = (
     "📖 LINE Stock Bot\n"
     "━━━━━━━━━━━━━━━\n"
+    "\n"
     "🔹 วิเคราะห์หุ้นรายตัว\n"
-    "  พิมพ์ ticker เช่น: AAPL, TSLA, NVDA\n"
-    "  หรือ /analyze AAPL\n\n"
+    "\n"
+    "  พิมพ์ ticker เช่น:\n"
+    "  AAPL, TSLA, NVDA, MSFT\n"
+    "\n"
+    "━━━━━━━━━━━━━━━\n"
+    "\n"
     "🔹 ดูหุ้นเด่นแต่ละกลุ่ม\n"
-    "  /sectors — แสดง sector ทั้งหมด\n"
-    "  /top AI — top picks กลุ่ม AI\n"
-    "  /top SEMI, FINTECH, CYBER, CLOUD,\n"
-    "       EV, BIO, DEFENSE\n\n"
-    "🔹 คริปโต\n"
-    "  BTC-USD, ETH-USD\n\n"
-    "🔹 คำสั่งอื่น\n"
-    "  /help — วิธีใช้\n"
-    "  /sectors — รายการ sector\n\n"
-    "⚠️ ไม่ใช่คำแนะนำลงทุน — DYOR"
+    "\n"
+    "  /sectors      ดูรายการกลุ่ม\n"
+    "  /top AI       Top 5 หุ้น AI\n"
+    "  /top SEMI     เซมิคอนดักเตอร์\n"
+    "  /top FINTECH  เทคโนโลยีการเงิน\n"
+    "  /top CYBER    ความปลอดภัยไซเบอร์\n"
+    "  /top CLOUD    คลาวด์\n"
+    "  /top EV       รถยนต์ไฟฟ้า\n"
+    "  /top BIO      ไบโอเทค\n"
+    "  /top DEFENSE  กลาโหม/อวกาศ\n"
+    "\n"
+    "━━━━━━━━━━━━━━━\n"
+    "\n"
+    "📂 รายละเอียดแต่ละกลุ่ม\n"
+    "\n"
+    "🤖 AI — ปัญญาประดิษฐ์\n"
+    "   NVDA, MSFT, META, GOOGL, PLTR\n"
+    "\n"
+    "💾 SEMI — เซมิคอนดักเตอร์\n"
+    "   NVDA, TSM, AMD, ASML, AVGO\n"
+    "\n"
+    "💳 FINTECH — เทคโนโลยีการเงิน\n"
+    "   V, MA, PYPL, SQ, HOOD\n"
+    "\n"
+    "🛡️ CYBER — ความปลอดภัยไซเบอร์\n"
+    "   CRWD, PANW, ZS, FTNT, S\n"
+    "\n"
+    "☁️ CLOUD — คลาวด์คอมพิวติ้ง\n"
+    "   AMZN, MSFT, GOOGL, ORCL, NOW\n"
+    "\n"
+    "🔋 EV — ยานยนต์ไฟฟ้า/พลังงาน\n"
+    "   TSLA, ENPH, FSLR, NEE, LCID\n"
+    "\n"
+    "🧬 BIO — ไบโอเทค / ยา\n"
+    "   LLY, NVO, VRTX, REGN, AMGN\n"
+    "\n"
+    "🚀 DEFENSE — กลาโหม / อวกาศ\n"
+    "   LMT, RTX, PLTR, KTOS, BA\n"
+    "\n"
+    "━━━━━━━━━━━━━━━\n"
+    "\n"
+    "🔹 ความช่วยเหลือ\n"
+    "  /help — แสดงคู่มือนี้"
 )
 
 
@@ -413,12 +441,11 @@ def handle_message(event):
     elif upper.startswith('/TOP '):
         sector_code = upper.replace('/TOP ', '', 1).strip()
         reply = top_picks(sector_code)
-    elif upper.startswith('/ANALYZE '):
-        reply = analyze_stock(upper.replace('/ANALYZE ', '', 1))
     elif upper.startswith('/'):
         reply = "❓ คำสั่งไม่ถูกต้อง พิมพ์ /help เพื่อดูวิธีใช้"
     else:
-        if 1 <= len(text) <= 10 and text.replace('.', '').replace('-', '').isalnum():
+        # ticker ปกติ — ตัวอักษร 1-10 ตัว
+        if 1 <= len(text) <= 10 and text.replace('.', '').isalnum():
             reply = analyze_stock(upper)
         else:
             reply = "❓ ไม่เข้าใจคำสั่ง พิมพ์ /help เพื่อดูวิธีใช้"
