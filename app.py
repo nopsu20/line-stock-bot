@@ -111,6 +111,25 @@ SECTORS = {
             'BA':   'Aerospace ใหญ่สุด + defense + space',
         },
     },
+    'DIV': {
+        'name': '💰 Dividend Stocks',
+        'tickers': ['JNJ', 'KO', 'O', 'PG', 'XOM'],
+        'theses': {
+            'JNJ': 'Healthcare blue chip — Dividend King',
+            'KO':  'Coca-Cola — Dividend King 60+ ปี',
+            'O':   'REIT จ่ายปันผลรายเดือน',
+            'PG':  'P&G สินค้าอุปโภค — Dividend King',
+            'XOM': 'พลังงานยักษ์ใหญ่ ปันผลสูง',
+        },
+        # yield คงที่ (approximate, ปรับได้ตามจริง)
+        'yields': {
+            'JNJ': 3.2,
+            'KO':  3.0,
+            'O':   5.5,
+            'PG':  2.5,
+            'XOM': 3.5,
+        },
+    },
 }
 
 # ---------- Simple Cache (memory, 30 นาที) ----------
@@ -342,6 +361,8 @@ def top_picks(sector_code: str) -> str:
     sector = SECTORS[sector_code]
     tickers = sector['tickers']
     theses = sector['theses']
+    yields = sector.get('yields', {})
+    is_div = sector_code == 'DIV'
 
     m = [f"{sector['name']} — Top Picks", "━━━━━━━━━━━━━━━"]
     for i, ticker in enumerate(tickers, 1):
@@ -349,11 +370,22 @@ def top_picks(sector_code: str) -> str:
         if stats is None:
             m.append(f"{i}. {ticker} — ไม่พบข้อมูล")
             continue
-        m.append(
-            f"{i}. {ticker}  ${stats['price']:,.2f} ({stats['change_pct']:+.2f}%)\n"
-            f"   📉 จาก ATH: {stats['pullback']:+.1f}%  | RSI {stats['rsi']:.0f}\n"
-            f"   💡 {theses.get(ticker, '')}"
-        )
+
+        if is_div:
+            # กลุ่ม Dividend — แสดง Yield แทน Pullback
+            y = yields.get(ticker, 0)
+            m.append(
+                f"{i}. {ticker}  ${stats['price']:,.2f} ({stats['change_pct']:+.2f}%)\n"
+                f"   💵 Yield ~{y:.1f}%  | RSI {stats['rsi']:.0f}\n"
+                f"   💡 {theses.get(ticker, '')}"
+            )
+        else:
+            # กลุ่มอื่น — แสดง Pullback
+            m.append(
+                f"{i}. {ticker}  ${stats['price']:,.2f} ({stats['change_pct']:+.2f}%)\n"
+                f"   📉 จาก ATH: {stats['pullback']:+.1f}%  | RSI {stats['rsi']:.0f}\n"
+                f"   💡 {theses.get(ticker, '')}"
+            )
 
     m.append("")
     m.append("📊 พิมพ์ ticker เพื่อดูแนวรับแนวต้าน")
@@ -392,6 +424,7 @@ HELP_TEXT = (
     "  /top EV       รถยนต์ไฟฟ้า\n"
     "  /top BIO      ไบโอเทค\n"
     "  /top DEFENSE  กลาโหม/อวกาศ\n"
+    "  /top DIV      หุ้นปันผล\n"
     "\n"
     "━━━━━━━━━━━━━━━\n"
     "\n"
@@ -420,6 +453,9 @@ HELP_TEXT = (
     "\n"
     "🚀 DEFENSE — กลาโหม / อวกาศ\n"
     "   LMT, RTX, PLTR, KTOS, BA\n"
+    "\n"
+    "💰 DIV — หุ้นปันผลสูง\n"
+    "   JNJ, KO, O, PG, XOM\n"
     "\n"
     "━━━━━━━━━━━━━━━\n"
     "\n"
