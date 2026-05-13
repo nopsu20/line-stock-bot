@@ -331,7 +331,7 @@ def analyze_stock(symbol: str) -> str:
         return f"⚠️ เกิดข้อผิดพลาด: {str(e)[:100]}"
 
 
-# ---------- Sector Top Picks ----------
+# ---------- Sector Top Picks (เรียงตามคะแนนความน่าซื้อ) ----------
 def get_quick_stats(symbol: str):
     df = fetch_twelvedata(symbol)
     if df is None or df.empty or len(df) < 20:
@@ -342,12 +342,98 @@ def get_quick_stats(symbol: str):
     high_52w = float(df['High'].max())
     pullback = (close - high_52w) / high_52w * 100
     rsi = calc_rsi(df['Close'])
+    sma50 = float(df['Close'].rolling(50).mean().iloc[-1]) if len(df) >= 50 else None
+    sma200 = float(df['Close'].rolling(200).mean().iloc[-1]) if len(df) >= 200 else None
     return {
         'price': close,
         'change_pct': change_pct,
         'pullback': pullback,
         'rsi': rsi,
+        'sma50': sma50,
+        'sma200': sma200,
     }
+
+
+def calculate_buy_score(stats):
+    """คำนวณคะแนนความน่าซื้อ 0-100 + เหตุผล"""
+    score = 0
+    reasons = []
+
+    rsi = stats['rsi']
+    pullback = stats['pullback']
+    close = stats['price']
+    sma50 = stats['sma50']
+    sma200 = stats['sma200']
+
+    # 1. RSI Score (0-35 คะแนน)
+    if 25 <= rsi <= 35:
+        score += 35
+        reasons.append("RSI oversold เข้าจังหวะดี")
+    elif 35 < rsi <= 45:
+        score += 30
+        reasons.append("RSI ต่ำ น่าทยอยเก็บ")
+    elif 45 < rsi <= 55:
+        score += 22
+    elif 55 < rsi <= 65:
+        score += 15
+    elif 65 < rsi <= 75:
+        score += 5
+        reasons.append("RSI สูง ราคาเริ่มแพง")
+    elif rsi > 75:
+        score += 0
+        reasons.append("RSI overbought รอ correction")
+    else:  # rsi < 25
+        score += 20
+        reasons.append("RSI ต่ำมาก ระวัง falling knife")
+
+    # 2. Pullback Score (0-35 คะแนน)
+    if -35 <= pullback <= -20:
+        score += 35
+        reasons.append("ลงจาก ATH 20-35% = healthy correction")
+    elif -20 < pullback <= -10:
+        score += 28
+    elif -10 < pullback <= -5:
+        score += 20
+    elif -5 < pullback <= 0:
+        score += 10
+        reasons.append("ใกล้ ATH ราคาเต็ม")
+    elif pullback < -35:
+        score += 15
+        reasons.append("ลงเยอะ อาจมีปัญหาธุรกิจ")
+
+    # 3. Trend Score (0-30 คะแนน)
+    if sma50 and sma200:
+        if close > sma50 > sma200:
+            score += 30
+            reasons.append("เทรนด์ขาขึ้นชัด")
+        elif sma50 > sma200 and close < sma50:
+            score += 28
+            reasons.append("Uptrend + pullback")
+        elif close > sma50 and sma50 < sma200:
+            score += 15
+            reasons.append("กำลังฟื้นจากลง")
+        elif close < sma50 < sma200:
+            score += 5
+            reasons.append("เทรนด์ขาลง")
+        else:
+            score += 12
+    else:
+        score += 15  # ข้อมูลไม่พอ
+
+    return min(score, 100), reasons
+
+
+def buy_label(score):
+    if score >= 80:
+        return "🟢 น่าสนใจมาก"
+    elif score >= 65:
+        return "🟡 น่าสนใจ"
+    elif score >= 50:
+        return "⚪ เฉยๆ"
+    elif score >= 30:
+        return "🟠 ระวัง"
+    else:
+        return "🔴 หลีกเลี่ยง"
 
 
 def top_picks(sector_code: str) -> str:
@@ -355,7 +441,7 @@ def top_picks(sector_code: str) -> str:
     if sector_code not in SECTORS:
         return (
             f"❓ ไม่พบ sector '{sector_code}'\n"
-            "พิมพ์ /sectors เพื่อดูทั้งหมด"
+            "พิมพ์ /help เพื่อดูทั้งหมด"
         )
 
     sector = SECTORS[sector_code]
@@ -364,31 +450,63 @@ def top_picks(sector_code: str) -> str:
     yields = sector.get('yields', {})
     is_div = sector_code == 'DIV'
 
-    m = [f"{sector['name']} — Top Picks", "━━━━━━━━━━━━━━━"]
-    for i, ticker in enumerate(tickers, 1):
+    # ดึงข้อมูลทั้งหมด + คำนวณ score
+    items = []
+    for ticker in tickers:
         stats = get_quick_stats(ticker)
+        if stats is None:
+            items.append({'ticker': ticker, 'stats': None})
+            continue
+        score, reasons = calculate_buy_score(stats)
+        items.append({
+            'ticker': ticker,
+            'stats': stats,
+            'score': score,
+            'reasons': reasons,
+        })
+
+    # เรียงตาม score มาก -> น้อย (ตัวที่ไม่มีข้อมูลอยู่ท้าย)
+    items.sort(key=lambda x: x.get('score', -1), reverse=True)
+
+    m = [f"{sector['name']}", "เรียงตามความน่าซื้อ", "━━━━━━━━━━━━━━━"]
+    for i, item in enumerate(items, 1):
+        ticker = item['ticker']
+        stats = item['stats']
         if stats is None:
             m.append(f"{i}. {ticker} — ไม่พบข้อมูล")
             continue
 
+        score = item['score']
+        label = buy_label(score)
+        reasons_str = ", ".join(item['reasons'][:2]) if item['reasons'] else "—"
+
         if is_div:
-            # กลุ่ม Dividend — แสดง Yield แทน Pullback
             y = yields.get(ticker, 0)
             m.append(
                 f"{i}. {ticker}  ${stats['price']:,.2f} ({stats['change_pct']:+.2f}%)\n"
-                f"   💵 Yield ~{y:.1f}%  | RSI {stats['rsi']:.0f}\n"
-                f"   💡 {theses.get(ticker, '')}"
+                f"   {label}  Score {score}/100\n"
+                f"   💵 Yield ~{y:.1f}%  | RSI {stats['rsi']:.0f}  | ATH {stats['pullback']:+.1f}%\n"
+                f"   💡 {theses.get(ticker, '')}\n"
+                f"   ✨ {reasons_str}"
             )
         else:
-            # กลุ่มอื่น — แสดง Pullback
             m.append(
                 f"{i}. {ticker}  ${stats['price']:,.2f} ({stats['change_pct']:+.2f}%)\n"
-                f"   📉 จาก ATH: {stats['pullback']:+.1f}%  | RSI {stats['rsi']:.0f}\n"
-                f"   💡 {theses.get(ticker, '')}"
+                f"   {label}  Score {score}/100\n"
+                f"   📉 ATH {stats['pullback']:+.1f}%  | RSI {stats['rsi']:.0f}\n"
+                f"   💡 {theses.get(ticker, '')}\n"
+                f"   ✨ {reasons_str}"
             )
 
     m.append("")
-    m.append("📊 พิมพ์ ticker เพื่อดูแนวรับแนวต้าน")
+    m.append("━━━━━━━━━━━━━━━")
+    m.append("🟢 น่าสนใจมาก (80+)")
+    m.append("🟡 น่าสนใจ (65-79)")
+    m.append("⚪ เฉยๆ (50-64)")
+    m.append("🟠 ระวัง (30-49)")
+    m.append("🔴 หลีกเลี่ยง (<30)")
+    m.append("")
+    m.append("📊 พิมพ์ ชื่อหุ้นที่คุณสนใจเพื่อดูแนวรับแนวต้าน")
     return "\n".join(m)
 
 
@@ -415,7 +533,6 @@ HELP_TEXT = (
     "\n"
     "🔹 ดูหุ้นเด่นแต่ละกลุ่ม\n"
     "\n"
-    "  /sectors      ดูรายการกลุ่ม\n"
     "  /top AI       Top 5 หุ้น AI\n"
     "  /top SEMI     เซมิคอนดักเตอร์\n"
     "  /top FINTECH  เทคโนโลยีการเงิน\n"
@@ -425,37 +542,6 @@ HELP_TEXT = (
     "  /top BIO      ไบโอเทค\n"
     "  /top DEFENSE  กลาโหม/อวกาศ\n"
     "  /top DIV      หุ้นปันผล\n"
-    "\n"
-    "━━━━━━━━━━━━━━━\n"
-    "\n"
-    "📂 รายละเอียดแต่ละกลุ่ม\n"
-    "\n"
-    "🤖 AI — ปัญญาประดิษฐ์\n"
-    "   NVDA, MSFT, META, GOOGL, PLTR\n"
-    "\n"
-    "💾 SEMI — เซมิคอนดักเตอร์\n"
-    "   NVDA, TSM, AMD, ASML, AVGO\n"
-    "\n"
-    "💳 FINTECH — เทคโนโลยีการเงิน\n"
-    "   V, MA, PYPL, SQ, HOOD\n"
-    "\n"
-    "🛡️ CYBER — ความปลอดภัยไซเบอร์\n"
-    "   CRWD, PANW, ZS, FTNT, S\n"
-    "\n"
-    "☁️ CLOUD — คลาวด์คอมพิวติ้ง\n"
-    "   AMZN, MSFT, GOOGL, ORCL, NOW\n"
-    "\n"
-    "🔋 EV — ยานยนต์ไฟฟ้า/พลังงาน\n"
-    "   TSLA, ENPH, FSLR, NEE, LCID\n"
-    "\n"
-    "🧬 BIO — ไบโอเทค / ยา\n"
-    "   LLY, NVO, VRTX, REGN, AMGN\n"
-    "\n"
-    "🚀 DEFENSE — กลาโหม / อวกาศ\n"
-    "   LMT, RTX, PLTR, KTOS, BA\n"
-    "\n"
-    "💰 DIV — หุ้นปันผลสูง\n"
-    "   JNJ, KO, O, PG, XOM\n"
     "\n"
     "━━━━━━━━━━━━━━━\n"
     "\n"
