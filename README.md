@@ -1,145 +1,167 @@
 # LINE Stock Bot — วิเคราะห์หุ้นต่างประเทศพร้อมแนวรับ/แนวต้าน
 
-ส่งชื่อหุ้น (เช่น `AAPL`, `TSLA`, `NVDA`) ทาง LINE แล้วบอทจะตอบกลับด้วย:
-- ราคา, % เปลี่ยนแปลง, RSI(14), เทรนด์
-- แนวต้าน R1/R2/R3 + Pivot + แนวรับ S1/S2/S3
-- SMA20 / SMA50 / SMA200
-- Swing High/Low 20 วัน, High/Low 52 สัปดาห์
+LINE Bot สำหรับวิเคราะห์หุ้นต่างประเทศแบบเรียลไทม์ ตอบกลับด้วย Pivot Points, RSI, Moving Averages, แนวรับ/แนวต้าน และคัด Top Picks ตาม mega-trend sectors
 
-ข้อมูลดึงจาก Yahoo Finance ผ่าน `yfinance` (ฟรี ไม่ต้องสมัคร API key)
+**Live Demo:** ดูตัวอย่างผลลัพธ์ในข้อ "คำสั่งที่ใช้ได้" ด้านล่าง
+**ภาษา:** Python 3.11 (Flask)
+**Hosting:** Render.com (Free tier)
+**Data Source:** Twelve Data API (Free tier — 800 calls/วัน)
+
+---
+
+## คำสั่งที่ใช้ได้
+
+| คำสั่ง | ตัวอย่าง | ผลลัพธ์ |
+|---|---|---|
+| พิมพ์ ticker | `AAPL` | วิเคราะห์ราคา + RSI + SMA + แนวรับ/แนวต้าน R1-R3, S1-S3 |
+| `/sectors` | — | รายการ 9 mega-trend sectors |
+| `/top AI` | — | Top 5 หุ้น AI พร้อมราคา + thesis |
+| `/top SEMI` | — | Top 5 หุ้นเซมิคอนดักเตอร์ |
+| `/top FINTECH` | — | Top 5 หุ้นเทคโนโลยีการเงิน |
+| `/top CYBER` | — | Top 5 หุ้นความปลอดภัยไซเบอร์ |
+| `/top CLOUD` | — | Top 5 หุ้นคลาวด์ |
+| `/top EV` | — | Top 5 หุ้นรถยนต์ไฟฟ้า/พลังงาน |
+| `/top BIO` | — | Top 5 หุ้นไบโอเทค/ยา |
+| `/top DEFENSE` | — | Top 5 หุ้นกลาโหม/อวกาศ |
+| `/top DIV` | — | Top 5 หุ้นปันผลพร้อม Yield |
+| `/help` | — | คู่มือการใช้งาน |
 
 ---
 
 ## ขั้นที่ 1 — สมัคร LINE Messaging API (ฟรี)
 
-1. ไปที่ <https://developers.line.biz/console/> เข้าด้วย LINE Account
+1. ไปที่ <https://developers.line.biz/console/>
 2. **Create a new provider** → ตั้งชื่อ
 3. **Create a new channel** → เลือก **Messaging API**
-4. กรอกข้อมูลพื้นฐานแล้วสร้าง
-5. ไปแท็บ **Basic settings** → คัดลอก **Channel secret**
-6. ไปแท็บ **Messaging API** → กดสร้าง **Channel access token (long-lived)** → คัดลอก
-7. ในหน้านี้ ปิด **Auto-reply messages** (Edit → ปิด) เพื่อไม่ให้ชนกับบอทเรา
+4. ไปแท็บ **Basic settings** → คัดลอก **Channel secret**
+5. ไปแท็บ **Messaging API** → กดสร้าง **Channel access token (long-lived)**
+6. ปิด **Auto-reply messages** ไม่ให้ชนกับบอท
 
-เก็บค่า 2 ตัวนี้ไว้:
+เก็บค่าไว้:
 - `LINE_CHANNEL_SECRET`
 - `LINE_CHANNEL_ACCESS_TOKEN`
 
 ---
 
-## ขั้นที่ 2 — Push โค้ดขึ้น GitHub
+## ขั้นที่ 2 — สมัคร Twelve Data API (ฟรี)
 
-1. สร้าง repo ใหม่บน GitHub (private ก็ได้)
-2. อัปโหลดไฟล์เหล่านี้: `app.py`, `requirements.txt`, `Procfile`, `runtime.txt`, `.gitignore`
+1. ไปที่ <https://twelvedata.com/register>
+2. กรอก email + password → ยืนยัน email
+3. หลังล็อกอินจะเห็น **API key** ใน dashboard → คัดลอก
 
-หรือใช้ command line:
-```bash
-git init
-git add .
-git commit -m "init line stock bot"
-git branch -M main
-git remote add origin https://github.com/<your-user>/<your-repo>.git
-git push -u origin main
-```
+เก็บค่าไว้:
+- `TWELVE_DATA_API_KEY`
+
+> Free tier: 800 calls/วัน, 8 calls/นาที — เพียงพอสำหรับใช้ส่วนตัวและกลุ่มเล็ก
 
 ---
 
-## ขั้นที่ 3 — Deploy ฟรีบน Render.com
+## ขั้นที่ 3 — Push โค้ดขึ้น GitHub
 
-1. สมัคร <https://render.com> (ผูกบัญชี GitHub)
-2. **New +** → **Web Service** → เลือก repo ที่เพิ่งสร้าง
+ไฟล์ที่ต้องมี (4 ไฟล์):
+- `app.py` — โค้ดหลัก
+- `requirements.txt` — Python dependencies
+- `Procfile` — บอก Render วิธีรัน
+- `runtime.txt` — Python version
+
+อัปโหลดผ่านเว็บ GitHub ตรงๆ ได้ (ไม่ต้องใช้ git command line)
+
+---
+
+## ขั้นที่ 4 — Deploy บน Render.com (ฟรี)
+
+1. สมัคร <https://render.com> (Sign in with GitHub)
+2. **+ New** → **Web Service** → เลือก repo
 3. ตั้งค่า:
-   - **Environment**: `Python 3`
+   - **Language**: Python 3
+   - **Region**: Singapore
    - **Build Command**: `pip install -r requirements.txt`
    - **Start Command**: `gunicorn app:app --bind 0.0.0.0:$PORT --timeout 120`
    - **Instance Type**: **Free**
-4. กด **Advanced** → **Add Environment Variable**:
-   - `LINE_CHANNEL_ACCESS_TOKEN` = ค่าจากขั้นที่ 1
-   - `LINE_CHANNEL_SECRET` = ค่าจากขั้นที่ 1
-5. **Create Web Service** → รอ build เสร็จ (~3-5 นาที)
-6. คัดลอก URL ที่ได้ เช่น `https://line-stock-bot.onrender.com`
-
-> หมายเหตุ Free tier: เซิร์ฟเวอร์จะ "หลับ" หลังไม่มี traffic ~15 นาที ครั้งแรกที่กลับมาใช้จะตอบช้า ~30-50 วินาที จากนั้นกลับมาเร็วปกติ
-
----
-
-## ขั้นที่ 4 — ตั้ง Webhook URL ที่ LINE
-
-1. กลับไปที่ LINE Developers Console → channel ของเรา → แท็บ **Messaging API**
-2. **Webhook URL** = `https://<ชื่อ-app-คุณ>.onrender.com/webhook`
-3. กด **Update** → กด **Verify** ต้องขึ้น `Success`
-4. เปิด **Use webhook** ให้เป็น `On`
-5. แท็บนี้จะมี **QR code** ให้เพิ่มเพื่อนกับบอท → สแกนด้วย LINE มือถือ
+4. เพิ่ม **Environment Variables** 3 ตัว:
+   - `LINE_CHANNEL_ACCESS_TOKEN`
+   - `LINE_CHANNEL_SECRET`
+   - `TWELVE_DATA_API_KEY`
+5. กด **Create Web Service** → รอ build ~5 นาที
+6. คัดลอก URL ที่ได้ เช่น `https://line-stock-bot-xxxx.onrender.com`
 
 ---
 
-## ขั้นที่ 5 — ลองใช้
+## ขั้นที่ 5 — ตั้ง Webhook URL ใน LINE
 
-ในแชต LINE กับบอท พิมพ์:
-```
-AAPL
-```
-หรือ
-```
-/analyze TSLA
-```
+1. กลับไป LINE Developers Console → channel → แท็บ **Messaging API**
+2. **Webhook URL** = `https://<your-app>.onrender.com/webhook`
+3. กด **Update** → **Verify** → ต้องขึ้น `Success`
+4. เปิด **Use webhook** = On
 
-จะได้ผลประมาณนี้:
+---
+
+## ขั้นที่ 6 — ทดสอบ
+
+1. สแกน QR code ใน Developers Console เพิ่มบอทเป็นเพื่อน
+2. พิมพ์ `/help` → ดูคำสั่งทั้งหมด
+3. พิมพ์ `AAPL` → วิเคราะห์ Apple
+4. พิมพ์ `/top AI` → Top 5 หุ้น AI
+
+---
+
+## ป้องกัน Render Free Tier "หลับ" (Optional)
+
+Render Free tier จะ spin down หลังไม่มี traffic 15 นาที → ตอบช้าครั้งแรก 30-50 วินาที
+
+แก้ด้วย **UptimeRobot** (ฟรี):
+1. สมัคร <https://uptimerobot.com>
+2. + New Monitor → HTTP(s) → URL คือ Render URL ของคุณ
+3. Monitoring Interval: 5 minutes
+
+---
+
+## Mega-Trend Sectors ที่รองรับ
+
+| Code | กลุ่ม | หุ้นในกลุ่ม |
+|---|---|---|
+| AI | ปัญญาประดิษฐ์ | NVDA, MSFT, META, GOOGL, PLTR |
+| SEMI | เซมิคอนดักเตอร์ | NVDA, TSM, AMD, ASML, AVGO |
+| FINTECH | เทคโนโลยีการเงิน | V, MA, PYPL, SQ, HOOD |
+| CYBER | ความปลอดภัยไซเบอร์ | CRWD, PANW, ZS, FTNT, S |
+| CLOUD | คลาวด์คอมพิวติ้ง | AMZN, MSFT, GOOGL, ORCL, NOW |
+| EV | ยานยนต์ไฟฟ้า/พลังงาน | TSLA, ENPH, FSLR, NEE, LCID |
+| BIO | ไบโอเทค / ยา | LLY, NVO, VRTX, REGN, AMGN |
+| DEFENSE | กลาโหม / อวกาศ | LMT, RTX, PLTR, KTOS, BA |
+| DIV | หุ้นปันผลสูง | JNJ, KO, O, PG, XOM |
+
+---
+
+## โครงสร้างโปรเจกต์
+
 ```
-📊 AAPL
-━━━━━━━━━━━━━━━
-💰 ราคา: $189.45 (+1.23%)
-📈 RSI(14): 58.3 ✅ ปกติ
-🟢 เทรนด์ขาขึ้น (Uptrend)
-
-🔴 แนวต้าน (Resistance)
-  R3: $195.20
-  R2: $192.80
-  R1: $191.10
-⚪ Pivot: $189.00
-🟢 แนวรับ (Support)
-  S1: $187.30
-  S2: $185.20
-  S3: $182.90
-
-📐 Moving Averages
-  SMA20:  $186.40
-  SMA50:  $182.15
-  SMA200: $175.80
-...
+line-stock-bot/
+├── app.py             # โค้ดหลัก (Flask + LINE handler + analyzer)
+├── requirements.txt   # Python dependencies
+├── Procfile          # Render start command
+├── runtime.txt       # Python version (3.11.9)
+└── README.md         # คู่มือนี้
 ```
 
 ---
 
-## รัน Local เพื่อทดสอบก่อน deploy (optional)
+## Tech Stack
 
-```bash
-python -m venv venv
-source venv/bin/activate          # Mac/Linux
-# หรือ venv\Scripts\activate     # Windows
-pip install -r requirements.txt
-export LINE_CHANNEL_ACCESS_TOKEN="..."
-export LINE_CHANNEL_SECRET="..."
-python app.py
-```
-
-ใช้ [ngrok](https://ngrok.com) เปิด public URL: `ngrok http 5000`
-แล้วเอา URL ที่ได้ + `/webhook` ไปใส่ในช่อง Webhook URL ของ LINE
+- **Python 3.11** + **Flask 3.0**
+- **line-bot-sdk** — LINE Messaging API
+- **pandas + numpy** — คำนวณ technical indicators
+- **requests** — เรียก Twelve Data API
+- **gunicorn** — production WSGI server
+- **Twelve Data API** — ข้อมูลราคาหุ้นรายวัน
 
 ---
 
-## ปรับแต่งเพิ่มเติม
+## Disclaimer
 
-ในไฟล์ `app.py` แก้ฟังก์ชัน `analyze_stock()` ได้ตามต้องการ เช่น:
-- เปลี่ยนช่วงเวลา: `period="1y"` → `"6mo"`, `"2y"`, `"5y"`
-- เพิ่ม Fibonacci Retracement
-- เพิ่ม MACD, Bollinger Bands (ใช้ `pandas-ta`)
-- ส่งกราฟเป็นรูป (ImageSendMessage + matplotlib + อัปโหลดไป Imgur/S3)
+ข้อมูลและการวิเคราะห์จากบอทนี้เป็นข้อมูลเชิงเทคนิคเพื่อการศึกษาเท่านั้น **ไม่ใช่คำแนะนำการลงทุน** การลงทุนมีความเสี่ยง ผู้ใช้ควรศึกษาข้อมูลและตัดสินใจด้วยตนเอง (DYOR — Do Your Own Research)
 
-## หุ้นที่รองรับ
+---
 
-ใส่ ticker ตามมาตรฐาน Yahoo Finance:
-- หุ้นสหรัฐฯ: `AAPL`, `TSLA`, `MSFT`, `GOOGL`, `META`, `AMZN`, `NVDA`
-- ETF: `SPY`, `QQQ`, `VOO`, `ARKK`
-- คริปโต: `BTC-USD`, `ETH-USD`
-- ทอง/น้ำมัน: `GC=F`, `CL=F`
-- หุ้นไทย: `PTT.BK`, `KBANK.BK`, `CPALL.BK`
+## License
+
+MIT License — ใช้/แก้ไข/แจกจ่ายได้ตามต้องการ
